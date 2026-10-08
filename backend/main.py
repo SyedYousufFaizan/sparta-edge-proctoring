@@ -128,6 +128,7 @@ REPO_CACHE = LRUCache(max_size=50, ttl_seconds=3600)
 class ChatRequest(BaseModel):
     message: str
     history: List[dict] = []
+    context: str = ""
 
 class RepoRequest(BaseModel):
     github_url: str
@@ -418,6 +419,13 @@ async def analyze_portfolio(
 
         target_url = github_url if github_url and github_url != "null" and github_url.strip() else None
 
+        if not target_url:
+            import re
+            github_match = re.search(r'(https?://(?:www\.)?github\.com/[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)?)', resume_text)
+            if github_match:
+                target_url = github_match.group(1)
+                print(f"   🎯 Automatically extracted GitHub URL from resume: {target_url}")
+
         if target_url:
             print(f"   🎯 Using selected project URL: {target_url}")
         else:
@@ -534,7 +542,7 @@ async def chat_endpoint(request: ChatRequest):
         role = "user" if msg['type'] == 'user' else "model"
         gemini_history.append({"role": role, "parts": [msg['text']]})
 
-    response_text = brain.get_chat_response(gemini_history, request.message, context_summary)
+    response_text = brain.get_chat_response(gemini_history, request.message, request.context, context_summary)
     return {"response": response_text}
 
 @app.post("/generate_resume")

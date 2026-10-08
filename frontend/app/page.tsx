@@ -1035,7 +1035,7 @@ const RebuildModal = ({ onClose, rawResumeText }: { onClose: () => void, rawResu
                 <p className="animate-pulse font-mono text-sm">Executing XYZ Formula Rewrite & Extracting Metrics...</p>
              </div>
           ) : (
-            diffs.map((diff, idx) => (
+            (diffs || []).map((diff, idx) => (
               <div key={idx} className="flex flex-col gap-2">
                 {/* BEFORE block */}
                 <div className="p-4 bg-red-950/20 border border-red-900/30 rounded-lg">

@@ -33,6 +33,7 @@ export default function InterrogationPage() {
   // Turn Management State
   const [currentTurn, setCurrentTurn] = useState(0);
   const [turnQuestions, setTurnQuestions] = useState<{ [key: number]: string }>({});
+  const [turnTopics, setTurnTopics] = useState<{ [key: number]: string }>({});
   const [showReport, setShowReport] = useState(false);
 
   // Stored session state
@@ -44,6 +45,7 @@ export default function InterrogationPage() {
   const [defenseReport, setDefenseReport] = useState<any>(null);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [showTranscriptModal, setShowTranscriptModal] = useState(false);
 
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const deepgramSocket = useRef<WebSocket | null>(null);
@@ -194,21 +196,31 @@ export default function InterrogationPage() {
 
       if (isInterrogationEndedRef.current) return;
 
-      const replyText =
+      const rawReplyText =
         res.data.response ||
         res.data.reply ||
         (typeof res.data === "string" ? res.data : JSON.stringify(res.data));
 
-      const cleanText = replyText.toString().replace(/[*#`_\[\]]/g, "").trim();
+      let extractedTopic = `Turn ${targetTurn}`;
+      let cleanText = rawReplyText.toString().trim();
+      
+      const topicMatch = cleanText.match(/\[TOPIC:\s*(.*?)\]/i);
+      if (topicMatch) {
+        extractedTopic = topicMatch[1].trim();
+        cleanText = cleanText.replace(topicMatch[0], "").trim();
+      }
+
+      cleanText = cleanText.replace(/[*#`_\[\]]/g, "").trim();
 
       // Store the actual question asked for this turn
       setTurnQuestions((prev) => ({ ...prev, [targetTurn]: cleanText }));
+      setTurnTopics((prev) => ({ ...prev, [targetTurn]: extractedTopic }));
 
       // Update chat history immediately so interruptions don't cause history loss
       setChatHistory((prev) => [
         ...prev,
         { type: "user", text: userMessage },
-        { type: "model", text: cleanText },
+        { type: "model", text: rawReplyText },
       ]);
 
       const words = cleanText.split(" ");
@@ -262,8 +274,12 @@ export default function InterrogationPage() {
                 setTranscript(cleanText);
                 setIsAiSpeaking(false);
 
-                // Auto-redirect to Results if Conclusion (Turn 8) finishes speaking
-                if (targetTurn >= 8) {
+                // Auto-redirect to Results if Conclusion finishes speaking
+                if (
+                  // targetTurn >= 8 ||
+                  extractedTopic.toLowerCase().includes("conclusion") ||
+                  cleanText.toLowerCase().includes("thank you for participating")
+                ) {
                   handleFinishInterrogation();
                 }
               }
@@ -300,11 +316,13 @@ export default function InterrogationPage() {
           } else {
             if (typewriterTimer.current) clearInterval(typewriterTimer.current);
             setIsAiSpeaking(false);
-            setChatHistory((prev) => [
-              ...prev,
-              { type: "user", text: userMessage },
-              { type: "model", text: cleanText },
-            ]);
+            if (
+              // targetTurn >= 8 ||
+              extractedTopic.toLowerCase().includes("conclusion") ||
+              cleanText.toLowerCase().includes("thank you for participating")
+            ) {
+              handleFinishInterrogation();
+            }
           }
         }, 120);
       }
@@ -432,35 +450,37 @@ export default function InterrogationPage() {
 
         {!showReport ? (
           /* Live Interrogation Terminal View */
-          <div className="flex-1 flex flex-col lg:flex-row gap-6 min-h-[750px] bg-black border border-neutral-800 rounded-2xl shadow-2xl overflow-hidden">
+          <div className="flex-1 flex flex-col lg:flex-row gap-6 min-h-[750px] lg:h-[750px] lg:max-h-[85vh] bg-black border border-neutral-800 rounded-2xl shadow-2xl overflow-hidden">
             {/* Left Column: Context & Structured Topic Progression Panel */}
             <div className="lg:w-1/3 border-b lg:border-b-0 lg:border-r border-neutral-900 p-6 bg-neutral-950/50 flex flex-col gap-6">
 
               {/* Structured Topic Progression Panel */}
-              <div className="bg-neutral-900/80 border border-neutral-800 rounded-xl p-5 space-y-4">
+              <div className="flex-1 bg-neutral-900/80 border border-neutral-800 rounded-xl p-5 space-y-4 flex flex-col min-h-0">
                 <h4 className="text-xs font-mono text-neutral-400 uppercase tracking-widest border-b border-neutral-800 pb-2">
                   Topic Progression
                 </h4>
 
-                <div className="space-y-3 text-xs max-h-[450px] overflow-y-auto pr-2 custom-scrollbar">
-                  {[
-                    { t: 0, label: "Intro: Candidate Introduction" },
-                    { t: 1, label: "Phase 1: Project 1 Concept" },
-                    { t: 2, label: "Phase 1: Project 2 Trade-off" },
-                    { t: 3, label: "Phase 1: Accomplish & Failure" },
-                    { t: 4, label: "Pivot: Transition Gate" },
-                    { t: 5, label: "Phase 2: Missing Tech Stack" },
-                    { t: 6, label: "Phase 2: Deployment Stack" },
-                    { t: 7, label: "Phase 2: Career/Arch Pivot" },
-                  ].map((turnObj) => {
-                    const turnNum = turnObj.t;
+                <div id="topic-progression-container" className="flex-1 space-y-3 text-xs overflow-y-auto pr-2 custom-scrollbar relative">
+                  {Array.from({ length: currentTurn + 1 }).map((_, turnNum) => {
                     const questionText = turnQuestions[turnNum];
+                    const label = turnTopics[turnNum] || `Turn ${turnNum}`;
                     const isCurrent = currentTurn === turnNum;
                     const isCompleted = turnNum < currentTurn || !!questionText;
 
                     return (
                       <div
                         key={turnNum}
+                        ref={(el) => {
+                          if (isCurrent && el) {
+                            const container = document.getElementById("topic-progression-container");
+                            if (container) {
+                              container.scrollTo({
+                                top: el.offsetTop - container.offsetTop - (container.clientHeight / 2) + (el.clientHeight / 2),
+                                behavior: 'smooth'
+                              });
+                            }
+                          }
+                        }}
                         className={`p-3 rounded-lg border transition-all ${
                           isCurrent
                             ? "bg-red-950/20 border-red-900/60 text-white"
@@ -471,7 +491,7 @@ export default function InterrogationPage() {
                       >
                         <div className="flex items-center justify-between mb-1">
                           <span className={`font-mono font-bold ${isCurrent ? "text-red-400" : "text-neutral-500"}`}>
-                            {turnObj.label}
+                            {label}
                           </span>
                           {isCurrent && isAiSpeaking && (
                             <span className="flex items-center gap-1 text-[10px] text-red-400 font-mono animate-pulse">
@@ -494,15 +514,6 @@ export default function InterrogationPage() {
                     );
                   })}
                 </div>
-              </div>
-
-              <div className="mt-auto bg-red-950/20 border border-red-900/30 rounded-xl p-4 space-y-2">
-                <p className="text-xs text-red-400/80 font-mono uppercase tracking-wider">
-                  Audit Protocol:
-                </p>
-                <p className="text-xs text-red-300 leading-relaxed">
-                  Test depth of implementation. Do not accept high-level buzzwords or generic answers.
-                </p>
               </div>
             </div>
 
@@ -583,9 +594,13 @@ export default function InterrogationPage() {
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="px-3 py-1 bg-red-950/40 border border-red-900/60 text-red-400 font-mono text-xs rounded-md uppercase tracking-wider font-semibold">
-                    {defenseReport?.mode_evaluated || "VERBAL DEFENSE AUDIT"}
+                    {isGeneratingReport ? "ANALYZING DEFENSE..." : defenseReport?.mode_evaluated || "VERBAL DEFENSE AUDIT"}
                   </span>
-                  {defenseReport?.defense_verdict && (
+                  {isGeneratingReport ? (
+                    <span className="px-3 py-1 bg-neutral-800 text-white font-mono text-xs rounded-md font-semibold flex items-center gap-2">
+                      <Loader2 className="animate-spin" size={12} /> EVALUATING VERDICT
+                    </span>
+                  ) : defenseReport?.defense_verdict && (
                     <span className="px-3 py-1 bg-neutral-800 text-white font-mono text-xs rounded-md font-semibold">
                       VERDICT: {defenseReport.defense_verdict}
                     </span>
@@ -597,12 +612,22 @@ export default function InterrogationPage() {
               </div>
 
               <div className="flex items-center gap-6">
+                <button
+                  onClick={() => setShowTranscriptModal(true)}
+                  className="px-4 py-2 bg-neutral-800 hover:bg-neutral-700 text-neutral-200 text-xs font-mono rounded-lg transition-colors border border-neutral-700 cursor-pointer"
+                >
+                  View Transcript
+                </button>
                 <div className="text-center bg-black/60 border border-neutral-800 rounded-xl px-6 py-4">
                   <p className="text-xs font-mono text-neutral-500 uppercase tracking-widest mb-1">
                     Verbal Defense Score
                   </p>
                   <span className="text-4xl font-black text-red-500">
-                    {defenseReport?.overall_defense_score || roastData?.combat_readiness_score || 85}/100
+                    {isGeneratingReport ? (
+                      <Loader2 className="animate-spin inline-block mr-2" size={32} />
+                    ) : (
+                      `${defenseReport?.overall_defense_score ?? 0}/100`
+                    )}
                   </span>
                 </div>
               </div>
@@ -641,9 +666,15 @@ export default function InterrogationPage() {
                         </span>
                       </div>
 
-                      <p className="text-sm text-neutral-300 leading-relaxed font-medium">
-                        "{mistake.feedback}"
-                      </p>
+                      {mistake.feedback === "QUESTION NOT ANSWERED" ? (
+                        <p className="text-sm text-red-500 font-bold text-center my-4 uppercase tracking-wider">
+                          QUESTION NOT ANSWERED
+                        </p>
+                      ) : (
+                        <p className="text-sm text-neutral-300 leading-relaxed font-medium">
+                          "{mistake.feedback}"
+                        </p>
+                      )}
 
                       {mistake.is_unanswered && mistake.failsafe_recommendation && (
                         <div className="mt-auto pt-3 border-t border-neutral-800">
@@ -674,6 +705,10 @@ export default function InterrogationPage() {
               {isGeneratingReport ? (
                 <div className="py-12 text-center text-neutral-500 font-mono animate-pulse">
                   Generating battle report & STAR resume patches from your voice defense...
+                </div>
+              ) : defenseReport?.phase2_corrections?.length === 0 ? (
+                <div className="py-8 text-center text-red-500 font-bold font-mono border border-red-900/30 bg-red-950/20 rounded-xl">
+                  NO DEFENSE PROVIDED TO GENERATE BULLETS
                 </div>
               ) : (
                 <div className="space-y-4">
@@ -713,6 +748,47 @@ export default function InterrogationPage() {
               >
                 <ArrowLeft size={18} /> Return to Main Dashboard
               </Link>
+            </div>
+          </div>
+        )}
+
+        {/* Transcript Modal */}
+        {showTranscriptModal && (
+          <div 
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
+            onClick={() => setShowTranscriptModal(false)}
+          >
+            <div 
+              className="bg-neutral-950 border border-neutral-800 rounded-2xl p-8 max-w-2xl w-full flex flex-col max-h-[80vh] shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-6 border-b border-neutral-900 pb-4">
+                <h3 className="text-xl font-bold text-white">Full Interview Transcript</h3>
+                <button
+                  onClick={() => setShowTranscriptModal(false)}
+                  className="p-2 text-neutral-400 hover:text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer"
+                >
+                  Close
+                </button>
+              </div>
+              <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
+                {chatHistory.length === 0 ? (
+                  <p className="text-neutral-500 text-center font-mono py-8">No transcript recorded.</p>
+                ) : (
+                  chatHistory
+                    .filter((msg, idx) => !(idx === 0 && msg.type === "user" && msg.text.includes("Start the interrogation at TURN 0")))
+                    .map((msg, idx) => (
+                    <div key={idx} className={`p-4 rounded-xl ${msg.type === "user" ? "bg-neutral-900 ml-12 border border-neutral-800" : "bg-red-950/20 border border-red-900/30 mr-12"}`}>
+                      <p className={`text-xs font-mono font-bold mb-2 uppercase tracking-wider ${msg.type === "user" ? "text-neutral-500" : "text-red-500/70"}`}>
+                        {msg.type === "user" ? "Candidate" : "S.P.A.R.T.A. Agent"}
+                      </p>
+                      <p className="text-sm text-neutral-300 leading-relaxed">
+                        {msg.text}
+                      </p>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           </div>
         )}

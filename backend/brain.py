@@ -131,6 +131,48 @@ def analyze_resume_vs_code(resume_text, code_context, project_name=None, job_des
     3. IF ALL REQUIRED SKILLS / QUALIFICATIONS IN THE JOB DESCRIPTION ARE SATISFIED BY THE RESUME OR CODE, YOU MUST RETURN AN EMPTY ARRAY [].
     4. ONLY LIST A SKILL IF IT IS AN EXPLICIT REQUIREMENT IN THE JD THAT IS TRULY, COMPLETELY ABSENT (BOTH LITERALLY AND SEMANTICALLY) FROM THE RESUME AND CODE EVIDENCE.
     
+    CRITICAL RULES FOR "interview_metadata":
+    1. Extract the 'target_seniority' (e.g., Fresher, Junior, Mid-Level, Senior, Staff) directly from the JD. If not specified, infer based on required years of experience.
+    2. Extract 3-4 'phase1_domains' representing core tech/projects present in BOTH the JD and the Candidate's Resume. Select from the AVAILABLE CATEGORIES below.
+    3. Extract 2-3 'phase2_domains' representing concepts required by the JD but suspiciously ABSENT or weak in the Candidate's Resume. Select from the AVAILABLE CATEGORIES below.
+    4. Generate a 'ruthlessness_modifier' instructing the AI interviewer how strict to be (e.g., "Intern level: Be guiding but check basic concepts.", "Senior level: Be relentless, demand architectural trade-offs and scale considerations.")
+    
+    AVAILABLE CATEGORIES FOR DOMAINS (Select ONLY those strictly relevant to the JD & Resume):
+    - Core Architecture 
+    - System Design
+    - Tech Stack Used
+    - Data Governance 
+    - Model Evaluation
+    - Stakeholder Communication 
+    - Business Impact
+    - Performance Optimization 
+    - Frontend UX
+    - Process Improvement 
+    - Knowledge Management
+    - Hardware Diagnostics 
+    - Component-Level Repair
+    - Fleet Deployment
+    - System Migration
+    - Documentation & Compliance
+    - Systems Engineering 
+    - Classified Infrastructure
+    - IT Service Management 
+    - Incident Analysis
+    - Frontend Optimization & Responsiveness
+    - Software Quality 
+    - User Testing (QA/UAT)
+    - Infrastructure Hardening 
+    - Network Monitoring
+    - Agile Leadership 
+    - Team Delivery
+    - Enterprise IT Support & Escalations
+    - Virtualization 
+    - Physical Plant Design
+    - Regulatory Compliance & Standards
+    - Code Review & Mentorship
+    - Mobile Application Design 
+    - Porting
+    
     Return STRICT JSON matching this exact schema. DO NOT wrap in markdown blocks like ```json:
     {{
         "combat_readiness_score": (0-100),
@@ -145,6 +187,12 @@ def analyze_resume_vs_code(resume_text, code_context, project_name=None, job_des
             "skills": {{"score": (0-100), "roast": "(Critique of listed tech stack vs actual code usage and JD)"}},
             "formatting": {{"score": (0-100), "roast": "(Critique of resume layout/clarity)"}},
             "ats_compatibility": {{"score": (0-100), "roast": "(Will an ATS robot read this easily?)"}}
+        }},
+        "interview_metadata": {{
+            "target_seniority": "(Extracted seniority)",
+            "phase1_domains": ["Domain 1", "Domain 2"],
+            "phase2_domains": ["Missing Domain 1"],
+            "ruthlessness_modifier": "(Strictness instructions for the interviewer)"
         }}
     }}
     """
@@ -253,16 +301,83 @@ TURN 3 (Phase 1 Q3 - Accomplishment/Failure): "I see. You mentioned [Real Accomp
 TURN 4 (TRANSITION GATE): Say exactly: "Rest easy now. Say yes or continue, and we will go over and improve what can be improved." (Wait for their yes)
 TURN 5 (Phase 2 Q4 - Missing Tech/Tooling): Look closely at their resume. DO NOT hallucinate tools they didn't use. Ask them to clarify a gap or missing piece of their tech stack for a specific project. (e.g., "I notice you built X, but didn't mention what database or state management you used. What was your stack?")
 TURN 6 (Phase 2 Q5 - Deployment/DevOps/Testing): If they lack CI/CD or deployment experience in their resume, ask them how they handled testing or deployment in their projects, rather than hallucinating specific tools.
-TURN 7 (Phase 2 Q6 - Career/Architecture): Ask a broad architectural question or career pivot question based *only* on their actual background.
-TURN 8 (CONCLUSION): Say exactly: "Thank you for participating in the mock interview, I will now output your changes and mistakes." (STOP AFTER THIS)
+TURN 7 (Phase 2 Q6 - Career/Architecture): Ask a broad architectural question or career pivot question based *only* on their actual background. Wait for the user to answer this before proceeding to TURN 8.
+TURN 8 (CONCLUSION): Say exactly: "Thank you for participating in the mock interview, I will now output your changes and mistakes." (DO NOT append this to Turn 7. You MUST wait for the user's answer to Turn 7 first).
 
 If the candidate says "I don't know" or stumbles, briefly acknowledge and proceed to the next question.
 """
 
-def get_chat_response(history, message, context):
-    """Text chat UI upgraded to S.P.A.R.T.A. Two-Phase Interrogation Engine"""
+def get_chat_response(history, message, metadata_json, evidence_text):
+    """Text chat UI upgraded to S.P.A.R.T.A. Dynamic Agentic Interrogation Engine"""
     
-    system_prompt = f"{SPARTA_6_QUESTION_SCRIPT_PROMPT}\n\nCONTEXT & EVIDENCE:\n{context}"
+    import json
+    try:
+        context_data = json.loads(metadata_json)
+        metadata = context_data.get("interview_metadata", {})
+        target_seniority = metadata.get("target_seniority", "Unknown Seniority")
+        phase1_domains = metadata.get("phase1_domains", ["General Engineering"])
+        phase2_domains = metadata.get("phase2_domains", ["Deployment/DevOps"])
+        ruthlessness = metadata.get("ruthlessness_modifier", "Be professional and probing.")
+    except Exception as e:
+        print(f"⚠️ ERROR PARSING METADATA IN get_chat_response: {e}")
+        print(f"⚠️ Raw metadata_json was: {metadata_json}")
+        target_seniority = "Unknown Seniority"
+        phase1_domains = ["Core Architecture"]
+        phase2_domains = ["Code Quality"]
+        ruthlessness = "Be relentless and expect high-quality answers."
+
+    import re
+    turn_count = len([m for m in history if m["role"] == "user"])
+    
+    # Extract topics the AI has already asked
+    ai_messages = [m["parts"][0] for m in history if m["role"] == "model"]
+    asked_topics = []
+    for msg in ai_messages:
+        match = re.search(r'\[TOPIC:\s*(.*?)\]', msg, re.IGNORECASE)
+        if match:
+            asked_topics.append(match.group(1).strip())
+
+    # Ensure minimum domains
+    if len(phase1_domains) < 2:
+        phase1_domains.append("Problem Solving & Troubleshooting")
+    if len(phase2_domains) < 2:
+        phase2_domains.append("Best Practices & Code Quality")
+
+    # Determine remaining domains
+    remaining_phase1 = [d for d in phase1_domains if not any(d.lower() in t.lower() for t in asked_topics)]
+    remaining_phase2 = [d for d in phase2_domains if not any(d.lower() in t.lower() for t in asked_topics)]
+    has_asked_scenario = any("scenario" in t.lower() for t in asked_topics)
+    
+    # Decide NEXT action programmatically
+    if turn_count == 0:
+        next_instruction = "Say EXACTLY: '[TOPIC: Intro] Go ahead and introduce yourself.' DO NOT add anything else."
+    elif remaining_phase1:
+        target_domain = remaining_phase1[0]
+        next_instruction = f"Target Domain: {target_domain}. You MUST formulate exactly ONE question exploring this domain based on their resume/code. Prefix your response exactly with [TOPIC: Phase 1 - {target_domain}]. DO NOT invent new phases like Phase 3.\nAlternatively, if the candidate's last answer was exceptionally weak, you may ask ONE Follow-Up question instead, prefixed with [TOPIC: Phase 1 - Follow-Up]. DO NOT ask a follow-up if they explicitly admit they don't know (e.g., 'I don't know' or 'Not sure'). If they surrender, you MUST skip the follow-up and ask about the Target Domain."
+    elif not has_asked_scenario:
+        next_instruction = f"Target Domain: System Design Scenario. You MUST ask exactly ONE hypothetical 'What if' problem-solving scenario tailored to the JD. Prefix your response exactly with [TOPIC: Phase 1 - Scenario]."
+    elif remaining_phase2:
+        target_domain = remaining_phase2[0]
+        next_instruction = f"Target Domain: {target_domain}. You MUST formulate exactly ONE question exploring this missing skill based on the JD. Prefix your response exactly with [TOPIC: Phase 2 - {target_domain}]. DO NOT invent new phases like Phase 3.\nAlternatively, if the candidate's last answer was exceptionally weak, you may ask ONE Follow-Up question instead, prefixed with [TOPIC: Phase 2 - Follow-Up]. DO NOT ask a follow-up if they explicitly admit they don't know (e.g., 'I don't know' or 'Not sure'). If they surrender, you MUST skip the follow-up and ask about the Target Domain."
+    else:
+        next_instruction = "Say EXACTLY: '[TOPIC: Conclusion] Thank you for participating in the mock interview, I will now output your changes and mistakes.' DO NOT add anything else."
+
+    system_prompt = f"""You are S.P.A.R.T.A., an elite Autonomous Technical Interrogator.
+You are interviewing a candidate for a {target_seniority} role.
+
+RUTHLESSNESS MODIFIER: {ruthlessness}
+
+CRITICAL RULES:
+1. STRICT PACING: You MUST ONLY ask EXACTLY ONE question per turn. You MUST WAIT for the user to respond before asking the next question. NEVER output multiple questions.
+2. BRUTALLY SHORT: Never exceed 25 words per turn. Keep it spoken and direct.
+3. NO MARKDOWN CHARACTERS (**, ##, *, []). Use plain spoken English for Text-to-Speech compatibility (except for the required TOPIC tag).
+4. PROJECT ROTATION: Ensure your questions touch on DIFFERENT projects across the candidate's resume, rather than focusing entirely on a single project.
+
+YOUR PROGRAMMATIC INSTRUCTION FOR THIS EXACT TURN:
+{next_instruction}
+
+CONTEXT & EVIDENCE:
+{evidence_text}"""
     
     messages = [{"role": "system", "content": system_prompt}]
     
@@ -326,8 +441,6 @@ def reconstruct_resume(resume_text: str, spoken_transcript: str = "", context: s
             context_data = json.loads(context) if isinstance(context, str) else context
             if isinstance(context_data, dict) and (
                 context_data.get("code") or 
-                context_data.get("selected_project") or 
-                context_data.get("verdict") or 
                 context_data.get("repo_url")
             ):
                 has_repo_code = True
@@ -350,15 +463,17 @@ def reconstruct_resume(resume_text: str, spoken_transcript: str = "", context: s
     {json.dumps(context_data)[:4000] if context_data else "No additional context."}
 
     ABSOLUTE RULES FOR PHASE 1 MISTAKES:
-    1. Score Q1 (Project Concept), Q2 (Trade-off), and Q3 (Accomplishment/Failure) from 0-100 based on their defense.
-    2. If the user answered well, provide a compliment in 'feedback'. If they struggled, provide constructive critique and the "ideal/correct" technical answer.
-    3. If the user said "I don't know", "Not sure", or provided an incomplete non-answer, set 'is_unanswered' to true, and provide a 'failsafe_recommendation' (e.g., "Recommended: Revisit [Concept] required by target JD"). Otherwise, set 'failsafe_recommendation' to null.
+    1. Extract the actual dynamic domains/topics discussed during Phase 1 from the transcript and score each from 0-100 based on their defense. (e.g. "Phase 1 - Distributed Systems"). ONLY list domains that were actually asked by the interviewer in the transcript.
+    2. If the user answered well, provide a compliment in 'feedback'. If they struggled, provide constructive critique.
+    3. If the user dodged the question, said "I don't know", or provided an incomplete non-answer to a question that WAS asked, set 'is_unanswered' to true, set 'score' to 0, and provide a 'failsafe_recommendation'.
+    4. CRITICAL: DO NOT hallucinate or penalize domains that the interviewer never actually asked. If the interviewer skipped a domain, simply omit it from your output.
+    5. CRITICAL: The transcript is generated by Speech-to-Text (STT). IGNORE ALL SPELLING, GRAMMAR, AND PRONUNCIATION MISTAKES (e.g., 'Rango' instead of 'Django', 'fast API' instead of 'FastAPI'). DO NOT deduct points or mention spelling/grammar errors in your feedback.
 
     ABSOLUTE RULES FOR PHASE 2 CORRECTIONS (BULLETS):
-    1. Synthesize 3 actionable resume bullets based heavily on what the candidate spoke about in Phase 2 (Q4, Q5, Q6) or Phase 1.
-    2. DYNAMIC BULLET BEHAVIOR: If the candidate exposed significant missing gaps (e.g. tools, tech stack, architecture), generate net-new bullet points to add to their resume. However, if the candidate had a very solid defense with few missing gaps, simply REPHRASE and ENHANCE their discussed points into highly ATS-compatible, impactful bullets.
-    3. Use the XYZ Formula (Accomplished X as measured by Y, by doing Z). Start with Tier-1 action verbs.
-    4. Assign each a relevant category (e.g., "Deployment & Tooling Stack", "ATS Enhancement", "Architectural Depth").
+    1. Synthesize 2-3 actionable resume bullets based strictly on what the candidate actually spoke about in Phase 2 or Phase 1. DO NOT hallucinate or add extra tools, technologies, or responsibilities that the candidate did not explicitly mention.
+    2. DYNAMIC BULLET BEHAVIOR: If the candidate exposed significant missing gaps, generate net-new bullet points based ONLY on their answers. If they had a solid defense, REPHRASE their discussed points into highly ATS-compatible bullets.
+    3. CRITICAL: If the user ended the interrogation early and NEVER answered any Phase 2 questions, DO NOT hallucinate bullets. You MUST return an empty array [] for 'phase2_corrections'.
+    4. Assign each bullet a relevant category.
 
     Output strictly in this JSON format:
     {{
@@ -367,25 +482,18 @@ def reconstruct_resume(resume_text: str, spoken_transcript: str = "", context: s
       "defense_verdict": "VERIFIED_ENGINEER",
       "phase1_mistakes": [
         {{
-          "question_label": "Q1: Project Concept",
+          "question_label": "Phase 1 - [Domain Discussed]",
           "score": 85,
           "is_unanswered": false,
-          "feedback": "Solid explanation of API routing. To improve, mention middleware error handling.",
-          "failsafe_recommendation": null
+          "feedback": "...",
+          "failsafe_recommendation": "..."
         }},
         {{
-          "question_label": "Q2: Library Trade-off",
+          "question_label": "Phase 1 - [Another Domain]",
           "score": 40,
           "is_unanswered": true,
-          "feedback": "Candidate struggled to explain ORM trade-offs.",
+          "feedback": "...",
           "failsafe_recommendation": "Recommended: Revisit SQLAlchemy connection pooling concepts required by target JD."
-        }},
-        {{
-          "question_label": "Q3: Accomplishment & Failure",
-          "score": 92,
-          "is_unanswered": false,
-          "feedback": "Outstanding breakdown of caching strategies!",
-          "failsafe_recommendation": null
         }}
       ],
       "phase2_corrections": [
