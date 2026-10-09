@@ -53,3 +53,10 @@ Local environment files, dependency directories, and upload caches are ignored b
 No service keys are included in this document. The servers can start without them, but AI and speech requests need valid keys.
 
 Use Ctrl+C in each server terminal to stop it.
+
+## Save reconstruction bullets
+
+After analysis, select **Execute Reconstruction**. Edit the suggested bullets and select the bullets to include.
+Select **Save PDF copy** to replace the selected original bullets at their locations in a copy. The original file stays unchanged.
+Export requires a unique text match. Shorten bullets that cannot fit their original space. Scanned PDFs need a text layer before replacement.
+Replace marked metric placeholders before saving. PDF export runs locally in the backend and does not call an AI service.

@@ -18,6 +18,7 @@ from collections import OrderedDict
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from pydantic import BaseModel, field_validator
 from typing import List, Literal, Optional
 from dotenv import load_dotenv
@@ -60,6 +61,7 @@ import brain
 
 # --- NEW: S.P.A.R.T.A. HYBRID ENGINE IMPORTS ---
 from pipeline import extract_text_intelligently, analyze_with_groq
+from resume_pdf import replace_resume_bullets
 
 load_dotenv()
 
@@ -574,6 +576,27 @@ async def rebuild_endpoint(req: RebuildRequest):
             raise HTTPException(status_code=502, detail="Resume reconstruction failed. Please retry.")
     result = reconstruct_resume(req.resume_text, req.spoken_transcript, req.context)
     return result
+
+@app.post("/export_resume")
+async def export_resume(file: UploadFile = File(...), bullets: str = Form(...)):
+    is_valid, message = validate_file_upload(file)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=message)
+    pdf_bytes = await file.read(MAX_FILE_SIZE_MB * 1024 * 1024 + 1)
+    if len(pdf_bytes) > MAX_FILE_SIZE_MB * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="The resume PDF must be 10 MB or smaller.")
+    try:
+        selected = json.loads(bullets)
+        if not isinstance(selected, list):
+            raise ValueError("Selected bullets must be a list.")
+        output = replace_resume_bullets(pdf_bytes, selected)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    return Response(output, media_type="application/pdf", headers={
+        "Content-Disposition": 'attachment; filename="resume-reconstructed.pdf"',
+        "Cache-Control": "no-store",
+    })
+
 
 # We conditionally import parse_resume to satisfy the user's instructions without crashing uvicorn if it doesn't exist
 try:
