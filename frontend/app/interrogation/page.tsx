@@ -46,6 +46,7 @@ export default function InterrogationPage() {
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
   const [showTranscriptModal, setShowTranscriptModal] = useState(false);
+  const [isCopied, setIsCopied] = useState(false);
 
   const mediaRecorder = useRef<MediaRecorder | null>(null);
   const deepgramSocket = useRef<WebSocket | null>(null);
@@ -53,6 +54,7 @@ export default function InterrogationPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const typewriterTimer = useRef<NodeJS.Timeout | null>(null);
   const isInterrogationEndedRef = useRef<boolean>(false);
+  const isConclusionReachedRef = useRef<boolean>(false);
 
   useEffect(() => {
     try {
@@ -61,7 +63,7 @@ export default function InterrogationPage() {
       
       if (!storedData || !storedResume) {
         console.warn("No resume data found, redirecting to home...");
-        router.push("/");
+        window.location.href = "/";
         return;
       }
 
@@ -73,7 +75,7 @@ export default function InterrogationPage() {
       }
     } catch (e) {
       console.error("Error reading session storage:", e);
-      router.push("/");
+      window.location.href = "/";
     }
   }, [router]);
 
@@ -168,7 +170,7 @@ export default function InterrogationPage() {
   };
 
   const triggerAiResponse = async (userMessage: string, targetTurn: number) => {
-    if (isInterrogationEndedRef.current) return;
+    if (isInterrogationEndedRef.current || isConclusionReachedRef.current) return;
 
     setIsAiSpeaking(true);
     setTranscript("");
@@ -211,6 +213,10 @@ export default function InterrogationPage() {
       }
 
       cleanText = cleanText.replace(/[*#`_\[\]]/g, "").trim();
+      
+      if (extractedTopic.toLowerCase().includes("conclusion") || cleanText.toLowerCase().includes("thank you for participating")) {
+        isConclusionReachedRef.current = true;
+      }
 
       // Store the actual question asked for this turn
       setTurnQuestions((prev) => ({ ...prev, [targetTurn]: cleanText }));
@@ -334,7 +340,18 @@ export default function InterrogationPage() {
       }
     }
   };
-
+  const copyTranscriptToClipboard = () => {
+    const rawTranscript = chatHistory
+      .filter((msg, idx) => !(idx === 0 && msg.type === "user" && msg.text.includes("Start the interrogation at TURN 0")))
+      .map((msg) => `${msg.type === "user" ? "Candidate" : "S.P.A.R.T.A. Agent"}\n${msg.text}`)
+      .join("\n\n");
+    navigator.clipboard.writeText(rawTranscript).then(() => {
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2000);
+    }).catch(err => {
+      console.error("Failed to copy transcript:", err);
+    });
+  };
   const handleFinishInterrogation = async () => {
     // Set flag first to block all in-flight async TTS play calls
     isInterrogationEndedRef.current = true;
@@ -390,6 +407,15 @@ export default function InterrogationPage() {
     setTimeout(() => setCopiedIndex(null), 2000);
   };
 
+  if (!roastData || !rawResumeText) {
+    return (
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center font-mono text-red-500">
+        <Activity className="animate-pulse mb-4" size={32} />
+        <p>Initializing Secure Connection...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-black text-white flex flex-col font-sans">
       <audio ref={audioPlayer} className="hidden" />
@@ -412,7 +438,7 @@ export default function InterrogationPage() {
 
         <div className="flex items-center gap-3">
           <span className="px-3 py-1 bg-red-950/40 border border-red-800/40 text-red-400 text-xs font-mono rounded-full">
-            {showReport ? "PHASE 2: BATTLE REPORT" : `PHASE 1: TURN ${currentTurn}`}
+            {showReport ? "PHASE 2: BATTLE REPORT" : (roastData?.has_github ? "CODE GROUNDED INTERVIEW" : "RESUME GROUNDED INTERVIEW")}
           </span>
         </div>
       </header>
@@ -607,7 +633,9 @@ export default function InterrogationPage() {
                   )}
                 </div>
                 <p className="text-sm text-neutral-400">
-                  Dual-grounded voice defense evaluation score & 4-turn breakdown derived from your spoken answers.
+                  {roastData?.has_github 
+                    ? "Code and Resume grounded voice defense evaluation derived from your spoken answers." 
+                    : "Resume grounded voice defense evaluation derived from your spoken answers."}
                 </p>
               </div>
 
@@ -764,12 +792,20 @@ export default function InterrogationPage() {
             >
               <div className="flex items-center justify-between mb-6 border-b border-neutral-900 pb-4">
                 <h3 className="text-xl font-bold text-white">Full Interview Transcript</h3>
-                <button
-                  onClick={() => setShowTranscriptModal(false)}
-                  className="p-2 text-neutral-400 hover:text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer"
-                >
-                  Close
-                </button>
+                <div className="flex items-center space-x-3">
+                  <button
+                    onClick={copyTranscriptToClipboard}
+                    className="p-2 text-green-400 hover:text-green-300 bg-green-950/30 hover:bg-green-900/40 rounded-lg transition-colors cursor-pointer border border-green-900/50 text-sm font-medium w-32"
+                  >
+                    {isCopied ? "Copied!" : "Copy Transcript"}
+                  </button>
+                  <button
+                    onClick={() => setShowTranscriptModal(false)}
+                    className="p-2 text-neutral-400 hover:text-white bg-neutral-900 hover:bg-neutral-800 rounded-lg transition-colors cursor-pointer text-sm"
+                  >
+                    Close
+                  </button>
+                </div>
               </div>
               <div className="flex-1 overflow-y-auto space-y-4 pr-2 custom-scrollbar">
                 {chatHistory.length === 0 ? (

@@ -10,7 +10,7 @@
 
 [![Next.js 16](https://img.shields.io/badge/Next.js-16%20Turbopack-black?style=flat-square&logo=next.js)](https://nextjs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Python%203.13-009688?style=flat-square&logo=fastapi)](https://fastapi.tiangolo.com/)
-[![Groq LLaMA 3.3](https://img.shields.io/badge/Groq-LLaMA%203.3%2070B-f55036?style=flat-square)](https://groq.com/)
+[![Groq Fast API](https://img.shields.io/badge/Groq-Fast%20Inference-f55036?style=flat-square)](https://groq.com/)
 [![Deepgram](https://img.shields.io/badge/Deepgram-Nova--2%20%26%20Aura-13EF93?style=flat-square)](https://deepgram.com/)
 [![NVIDIA NIM](https://img.shields.io/badge/NVIDIA-Nemotron--OCR--v1-76B900?style=flat-square&logo=nvidia)](https://build.nvidia.com/)
 
@@ -42,17 +42,16 @@ It operates through a **Two-Phase Architecture**:
 ### 🎙️ 3. Full-Screen Voice Interrogation Terminal (`/interrogation`)
 - **Real-Time Voice Recognition**: Microsecond streaming STT powered by **Deepgram Nova-2**.
 - **Natural Voice Synthesis**: Spoken audio generation via **Deepgram Aura Athena** with real-time word reveal.
-- **Structured 4-Turn Topic Progression**:
-  - **Turn 1**: Under-the-Hood "Vibe Code" Architecture Verification.
-  - **Turn 2**: Tooling & Methodology Gaps vs. Job Description.
-  - **Turn 3**: STAR Metric Proof ("How behind the numbers").
-  - **Turn 4**: Failure Probe & Startup/Corporate Culture Fit.
-- **Interactive Phase Transition Gate**: User voice confirmation gate before initiating Phase 2.
-- **Async Audio Race Safety**: Immediate voice cutoff when clicking "End Interrogation & View Battle Report".
+- **Dynamic Programmatic State Machine**:
+  - Replaces fragile LLM prompt-planning with a strict Python-based state machine that ensures rigid 1-question pacing across 6-8+ turns.
+  - **Phase 1 (Claims Verification)**: Systematically interrogates 3-4 domains extracted from the candidate's actual resume/code overlap.
+  - **Phase 1 Scenario**: Injects a dynamically generated "What-If" system design challenge scaled to the target seniority level.
+  - **Phase 2 (Missing Skill Gaps)**: Pivots to grill the candidate on 2-3 domains explicitly required by the Job Description but missing from their resume.
+- **Adaptive Follow-Up Logic**: Dynamically triggers follow-up questions if the candidate dodges or provides weak answers, but skips them if the candidate verbally surrenders.
+- **Async Audio Race Safety**: Immediate voice cutoff and auto-transition to the Final Report when the AI concludes the final domain.
 
 ### 📄 4. S.P.A.R.T.A. Battle Audit Report
 - Generates 3 copy-pasteable FAANG-grade XYZ/STAR resume bullets built directly from the candidate's **spoken defense transcript**.
-- Provides actionable interview playbooks and 30-day technical upskilling roadmaps.
 
 ---
 
@@ -60,8 +59,8 @@ It operates through a **Two-Phase Architecture**:
 
 | Model Name | Provider | Role in S.P.A.R.T.A. |
 | :--- | :--- | :--- |
-| **LLaMA 3.3 70B Versatile** | Groq Cloud | **Flagship Audit & Interrogation Brain**: Technical critique, dynamic scoring, FAANG attack vectors, and STAR resume reconstruction. |
-| **LLaMA 3.1 8B Instant** | Groq Cloud | **Gatekeeper**: Ultra-fast resume validation checking document structure in `< 400ms`. |
+| **HEAVY_MODEL (`gpt-oss-120b`)** | Groq / OpenAI API | **Flagship Audit & Interrogation Brain**: Technical critique, dynamic scoring, State Machine, and STAR resume reconstruction. |
+| **FAST_MODEL (`gpt-oss-20b`)** | Groq / OpenAI API | **Gatekeeper**: Ultra-fast resume validation checking document structure in `< 400ms`. |
 | **NVIDIA Nemotron-OCR-v1** | NVIDIA NIM API | **High-Res OCR Engine**: Lossless PNG OCR for scanned PDF resumes. |
 | **Deepgram Nova-2** | Deepgram | **Real-Time STT**: Microsecond streaming speech recognition. |
 | **Deepgram Aura Athena** | Deepgram | **Natural TTS**: Neural voice synthesis for live interrogation responses. |
@@ -75,7 +74,7 @@ It operates through a **Two-Phase Architecture**:
 S.P.A.R.T.A/
 ├── backend/
 │   ├── main.py              # FastAPI server & route handlers
-│   ├── brain.py             # LLaMA 3.3 70B Two-Phase Engine & dynamic scoring logic
+│   ├── brain.py             # LLM State Machine Engine & dynamic scoring logic
 │   ├── pipeline.py          # NVIDIA Nemotron-OCR-v1 & PyMuPDF hybrid bridge
 │   ├── ingest_github.py     # GitHub repository scrapers
 │   ├── ingest_pdf.py        # PDF text parsers
@@ -169,7 +168,7 @@ pnpm dev
 | Endpoint | Method | Description |
 | :--- | :--- | :--- |
 | `POST /analyze` | `POST` | Cross-references uploaded PDF resume vs. GitHub repository & Job Description. |
-| `POST /chat` | `POST` | Interactive text chat powered by LLaMA 3.3 70B. |
+| `POST /chat` | `POST` | AI interrogation endpoint driven by a dynamic Python state machine. |
 | `POST /rebuild` | `POST` | Generates 3 STAR resume patches derived from the candidate's spoken defense. |
 | `GET /api/deepgram` | `GET` | Issue temporary Deepgram API tokens for client-side STT/TTS streaming. |
 | `POST /api/interrogation` | `POST` | Proxy handler for live two-phase voice interrogation turns. |

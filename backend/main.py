@@ -456,6 +456,7 @@ async def analyze_portfolio(
         try:
             data = json.loads(analysis_json)
             data["resume_text"] = resume_text
+            data["has_github"] = True if target_url else False
             analysis_json = json.dumps(data)
             
             critique = "\n".join([f"- {x}" for x in data.get("project_critique", [])])

@@ -307,6 +307,40 @@ TURN 8 (CONCLUSION): Say exactly: "Thank you for participating in the mock inter
 If the candidate says "I don't know" or stumbles, briefly acknowledge and proceed to the next question.
 """
 
+def evaluate_answer_fast(question: str, answer: str, ruthlessness: str, target_seniority: str) -> str:
+    prompt = f"""
+    Evaluate the candidate's answer to the interview question based on the Adaptive Follow-Up Strategy.
+    
+    RUTHLESSNESS MODIFIER: {ruthlessness}
+    TARGET SENIORITY: {target_seniority}
+    
+    QUESTION: {question}
+    ANSWER: {answer}
+    
+    Classify the answer into exactly one of these categories:
+    - "FOLLOW_UP_REQUIRED": Trigger ONLY in extreme cases where one of these 3 conditions is met:
+        1. Buzzword Drop: The candidate names a tool or concept but completely fails to explain *why* or *how* it was implemented.
+        2. Seniority Mismatch: The candidate gives a highly junior-level answer to a senior-level requirement.
+        3. Evasive Pivot: The candidate answers a completely different question to dodge the technical gap.
+    - "SUFFICIENT": The candidate's initial answer was reasonable and directly addressed the question. Default to SUFFICIENT. Do NOT trigger a follow-up just because an answer is brief. If the candidate makes a good faith technical effort, it is SUFFICIENT.
+    - "SURRENDER": The candidate explicitly admits they do not know the answer, says "pass", or lacks the experience (e.g. "I haven't worked with that").
+    
+    Return JSON exactly: {{"classification": "FOLLOW_UP_REQUIRED" | "SUFFICIENT" | "SURRENDER"}}
+    """
+    
+    try:
+        completion = groq_client.chat.completions.create(
+            model=FAST_MODEL,
+            messages=[{"role": "user", "content": prompt}],
+            response_format={"type": "json_object"},
+            temperature=0.1
+        )
+        result = json.loads(completion.choices[0].message.content)
+        return result.get("classification", "SUFFICIENT")
+    except Exception as e:
+        logger.warning(f"Evaluator failed: {e}")
+        return "SUFFICIENT"
+
 def get_chat_response(history, message, metadata_json, evidence_text):
     """Text chat UI upgraded to S.P.A.R.T.A. Dynamic Agentic Interrogation Engine"""
     
@@ -342,27 +376,53 @@ def get_chat_response(history, message, metadata_json, evidence_text):
         phase1_domains.append("Problem Solving & Troubleshooting")
     if len(phase2_domains) < 2:
         phase2_domains.append("Best Practices & Code Quality")
+        
+    # Cap domains logically so the interview isn't infinite
+    phase1_domains = phase1_domains[:3]
+    phase2_domains = phase2_domains[:2]
 
     # Determine remaining domains
     remaining_phase1 = [d for d in phase1_domains if not any(d.lower() in t.lower() for t in asked_topics)]
     remaining_phase2 = [d for d in phase2_domains if not any(d.lower() in t.lower() for t in asked_topics)]
     has_asked_scenario = any("scenario" in t.lower() for t in asked_topics)
     
+    trigger_followup = False
+    if turn_count > 0 and ai_messages:
+        last_question = ai_messages[-1]
+        last_answer = message
+        eval_result = evaluate_answer_fast(last_question, last_answer, ruthlessness, target_seniority)
+        logger.info(f"Answer Evaluation: {eval_result}")
+        if eval_result == "FOLLOW_UP_REQUIRED" and "Follow-Up" not in last_question and "Intro" not in last_question:
+            trigger_followup = True
+
+    is_phase2 = False
+
     # Decide NEXT action programmatically
     if turn_count == 0:
         next_instruction = "Say EXACTLY: '[TOPIC: Intro] Go ahead and introduce yourself.' DO NOT add anything else."
+    elif not remaining_phase1 and has_asked_scenario and not remaining_phase2:
+        # SHORT-CIRCUIT: The interview is mathematically over. Do not trust the LLM to end it.
+        return "[TOPIC: Conclusion] Thank you for participating in the mock interview, I will now output your changes and mistakes."
+    elif trigger_followup:
+        last_topic_tag = asked_topics[-1] if asked_topics else "Phase 1"
+        next_instruction = f"The candidate's last answer was evasive, lacked depth, or dropped buzzwords. You MUST ask exactly ONE Follow-Up question to drill deeper. Prefix your response EXACTLY with the literal string: '[TOPIC: {last_topic_tag} Follow-Up]'. Do not change the phase number."
     elif remaining_phase1:
         target_domain = remaining_phase1[0]
-        next_instruction = f"Target Domain: {target_domain}. You MUST formulate exactly ONE question exploring this domain based on their resume/code. Prefix your response exactly with [TOPIC: Phase 1 - {target_domain}]. DO NOT invent new phases like Phase 3.\nAlternatively, if the candidate's last answer was exceptionally weak, you may ask ONE Follow-Up question instead, prefixed with [TOPIC: Phase 1 - Follow-Up]. DO NOT ask a follow-up if they explicitly admit they don't know (e.g., 'I don't know' or 'Not sure'). If they surrender, you MUST skip the follow-up and ask about the Target Domain."
+        next_instruction = f"Target Domain: {target_domain}. You MUST formulate exactly ONE question exploring this domain based on their resume/code. Prefix your response EXACTLY with the literal string: '[TOPIC: Phase 1 - {target_domain}]'."
     elif not has_asked_scenario:
-        next_instruction = f"Target Domain: System Design Scenario. You MUST ask exactly ONE hypothetical 'What if' problem-solving scenario tailored to the JD. Prefix your response exactly with [TOPIC: Phase 1 - Scenario]."
+        next_instruction = f"Target Domain: System Design Scenario. You MUST ask exactly ONE hypothetical 'What if' problem-solving scenario tailored to the JD. Prefix your response EXACTLY with the literal string: '[TOPIC: Phase 1 - Scenario]'."
     elif remaining_phase2:
+        is_phase2 = True
         target_domain = remaining_phase2[0]
-        next_instruction = f"Target Domain: {target_domain}. You MUST formulate exactly ONE question exploring this missing skill based on the JD. Prefix your response exactly with [TOPIC: Phase 2 - {target_domain}]. DO NOT invent new phases like Phase 3.\nAlternatively, if the candidate's last answer was exceptionally weak, you may ask ONE Follow-Up question instead, prefixed with [TOPIC: Phase 2 - Follow-Up]. DO NOT ask a follow-up if they explicitly admit they don't know (e.g., 'I don't know' or 'Not sure'). If they surrender, you MUST skip the follow-up and ask about the Target Domain."
-    else:
-        next_instruction = "Say EXACTLY: '[TOPIC: Conclusion] Thank you for participating in the mock interview, I will now output your changes and mistakes.' DO NOT add anything else."
+        next_instruction = f"Target Domain: {target_domain}. SHIFT PERSONA: You are now a supportive career coach helping the candidate patch their resume. Your goal is to collaboratively uncover their experience with this missing JD skill. Formulate exactly ONE supportive, coaching-style question asking them to describe a time they used this skill. Prefix your response EXACTLY with the literal string: '[TOPIC: Phase 2 - {target_domain}]'. Do not invent Phase 3 or Phase 4."
 
-    system_prompt = f"""You are S.P.A.R.T.A., an elite Autonomous Technical Interrogator.
+    persona_prompt = (
+        "You are S.P.A.R.T.A., transitioning into a Supportive Career Coach. You are helping the candidate uncover missing skills so you can write strong resume patches for them. Be collaborative, encouraging, and supportive."
+        if is_phase2 else
+        "You are S.P.A.R.T.A., an elite Autonomous Technical Interrogator."
+    )
+
+    system_prompt = f"""{persona_prompt}
 You are interviewing a candidate for a {target_seniority} role.
 
 RUTHLESSNESS MODIFIER: {ruthlessness}
@@ -468,6 +528,7 @@ def reconstruct_resume(resume_text: str, spoken_transcript: str = "", context: s
     3. If the user dodged the question, said "I don't know", or provided an incomplete non-answer to a question that WAS asked, set 'is_unanswered' to true, set 'score' to 0, and provide a 'failsafe_recommendation'.
     4. CRITICAL: DO NOT hallucinate or penalize domains that the interviewer never actually asked. If the interviewer skipped a domain, simply omit it from your output.
     5. CRITICAL: The transcript is generated by Speech-to-Text (STT). IGNORE ALL SPELLING, GRAMMAR, AND PRONUNCIATION MISTAKES (e.g., 'Rango' instead of 'Django', 'fast API' instead of 'FastAPI'). DO NOT deduct points or mention spelling/grammar errors in your feedback.
+    6. SCORING LOGIC: Calculate 'overall_defense_score' STRICTLY as the mathematical average of the 'score' values from ONLY the Phase 1 questions that were ACTUALLY ANSWERED. If the candidate dodged/surrendered a question (is_unanswered = true), DO NOT include that question in the average calculation. If 0 questions were answered, output 0.
 
     ABSOLUTE RULES FOR PHASE 2 CORRECTIONS (BULLETS):
     1. Synthesize 2-3 actionable resume bullets based strictly on what the candidate actually spoke about in Phase 2 or Phase 1. DO NOT hallucinate or add extra tools, technologies, or responsibilities that the candidate did not explicitly mention.
@@ -527,8 +588,17 @@ def reconstruct_resume(resume_text: str, spoken_transcript: str = "", context: s
         # Parse the JSON response safely
         raw_content = completion.choices[0].message.content.strip()
         parsed = json.loads(raw_content)
+        
+        # Enforce mathematical average programmatically
+        if "phase1_mistakes" in parsed and isinstance(parsed["phase1_mistakes"], list):
+            answered_scores = [m.get("score", 0) for m in parsed["phase1_mistakes"] if not m.get("is_unanswered", False)]
+            if answered_scores:
+                parsed["overall_defense_score"] = int(sum(answered_scores) / len(answered_scores))
+            else:
+                parsed["overall_defense_score"] = 0
+                
         if "overall_defense_score" not in parsed:
-            parsed["overall_defense_score"] = 78
+            parsed["overall_defense_score"] = 0
         if "mode_evaluated" not in parsed:
             parsed["mode_evaluated"] = evaluation_mode
         return parsed
