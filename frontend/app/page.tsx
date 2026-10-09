@@ -986,22 +986,38 @@ const VoiceModal = ({
 const RebuildModal = ({ onClose, rawResumeText }: { onClose: () => void, rawResumeText: string }) => {
   const [isGenerating, setIsGenerating] = useState(true);
   const [diffs, setDiffs] = useState<{original: string, enhanced: string}[]>([]);
+  const [generationError, setGenerationError] = useState<string | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
   const generateDiffs = async () => {
     setIsGenerating(true);
+    setGenerationError(null);
     try {
+      if (!rawResumeText.trim()) {
+        throw new Error("Resume text is missing. Analyze your resume again before reconstruction.");
+      }
       const res = await fetch("/api/rebuild", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ resumeText: rawResumeText || "Worked on database and frontend UI" }),
+        body: JSON.stringify({ resumeText: rawResumeText, mode: "resume" }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "Resume reconstruction failed. Please retry.");
+      }
+      if (!Array.isArray(data.bullets) || !data.bullets.length || data.bullets.some(
+        (bullet: {original?: unknown; enhanced?: unknown} | null) => !bullet ||
+          typeof bullet.original !== "string" || typeof bullet.enhanced !== "string"
+      )) {
+        throw new Error("The server returned an invalid resume rewrite. Please retry.");
+      }
       setDiffs(data.bullets);
     } catch (e) {
-      console.error(e);
+      setDiffs([]);
+      setGenerationError(e instanceof Error ? e.message : "Resume reconstruction failed. Please retry.");
+    } finally {
+      setIsGenerating(false);
     }
-    setIsGenerating(false);
   };
 
   useEffect(() => {
@@ -1034,6 +1050,8 @@ const RebuildModal = ({ onClose, rawResumeText }: { onClose: () => void, rawResu
                 <Wrench className="animate-spin text-green-500/50" size={24} />
                 <p className="animate-pulse font-mono text-sm">Executing XYZ Formula Rewrite & Extracting Metrics...</p>
              </div>
+          ) : generationError ? (
+            <p role="alert" className="text-sm text-red-400">{generationError}</p>
           ) : (
             (diffs || []).map((diff, idx) => (
               <div key={idx} className="flex flex-col gap-2">
@@ -1047,9 +1065,13 @@ const RebuildModal = ({ onClose, rawResumeText }: { onClose: () => void, rawResu
                 <div className="p-5 bg-green-950/10 border border-green-500/30 rounded-lg relative group">
                   <span className="text-xs font-mono text-green-400 uppercase block mb-3">S.P.A.R.T.A. Enhanced</span>
                   {/* Pretext layout injection for smooth rendering */}
-                  <div className="text-sm text-neutral-200 font-mono leading-relaxed" dangerouslySetInnerHTML={{ 
-                    __html: diff.enhanced.replace(/🔴\[(.*?)\]/g, '<span class="text-red-400 bg-red-950/50 px-1 rounded">[$1]</span>') 
-                  }} />
+                  <div className="text-sm text-neutral-200 font-mono leading-relaxed">
+                    {diff.enhanced.split(/(🔴\[.*?\])/g).map((part, partIndex) =>
+                      part.startsWith("🔴[") ? (
+                        <span key={partIndex} className="text-red-400 bg-red-950/50 px-1 rounded">{part.slice(2)}</span>
+                      ) : part
+                    )}
+                  </div>
                   
                   <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
                     <button onClick={() => handleCopy(diff.enhanced, idx)} className="px-3 py-1 bg-black border border-neutral-700 hover:border-green-500 rounded text-xs text-neutral-300 transition-colors flex items-center gap-2">

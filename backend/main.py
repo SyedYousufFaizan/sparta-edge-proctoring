@@ -19,7 +19,7 @@ from collections import OrderedDict
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, field_validator
-from typing import List, Optional
+from typing import List, Literal, Optional
 from dotenv import load_dotenv
 
 import hashlib
@@ -560,9 +560,18 @@ class RebuildRequest(BaseModel):
     resume_text: str
     spoken_transcript: str = ""
     context: str = ""
+    mode: Literal["interview", "resume"] = "interview"
 
 @app.post("/rebuild")
 async def rebuild_endpoint(req: RebuildRequest):
+    if req.mode == "resume":
+        if not req.resume_text.strip():
+            raise HTTPException(status_code=400, detail="Resume text is required for reconstruction.")
+        try:
+            return brain.rewrite_resume_bullets(req.resume_text)
+        except Exception:
+            logger.exception("Resume reconstruction failed")
+            raise HTTPException(status_code=502, detail="Resume reconstruction failed. Please retry.")
     result = reconstruct_resume(req.resume_text, req.spoken_transcript, req.context)
     return result
 
