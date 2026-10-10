@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 
 export async function POST(req: Request) {
   try {
-    const { resumeText, spokenTranscript, context } = await req.json();
+    const { resumeText, spokenTranscript, context, mode } = await req.json();
 
     const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
     const response = await fetch(`${backendUrl}/rebuild`, {
@@ -11,15 +11,16 @@ export async function POST(req: Request) {
       body: JSON.stringify({
         resume_text: resumeText,
         spoken_transcript: spokenTranscript || "",
-        context: context || ""
+        context: context || "",
+        mode: mode || "interview"
       }),
     });
 
     // Explicitly check if the Python server failed
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error("FastAPI Backend Error:", errorText);
-      return NextResponse.json({ error: "Backend failed", details: errorText }, { status: response.status });
+      const failure = await response.json().catch(() => ({}));
+      const error = typeof failure.detail === "string" ? failure.detail : "Resume reconstruction failed. Please retry.";
+      return NextResponse.json({ error }, { status: response.status });
     }
 
     const data = await response.json();

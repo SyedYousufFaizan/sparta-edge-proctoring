@@ -983,25 +983,46 @@ const VoiceModal = ({
   );
 };
 
-const RebuildModal = ({ onClose, rawResumeText }: { onClose: () => void, rawResumeText: string }) => {
+const RebuildModal = ({ onClose, rawResumeText, uploadedFile }: { onClose: () => void, rawResumeText: string, uploadedFile: File | null }) => {
   const [isGenerating, setIsGenerating] = useState(true);
   const [diffs, setDiffs] = useState<{original: string, enhanced: string}[]>([]);
+  const [generationError, setGenerationError] = useState<string | null>(null);
+  const [selectedBullets, setSelectedBullets] = useState<boolean[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
   const generateDiffs = async () => {
     setIsGenerating(true);
+    setGenerationError(null);
+    setSaveError(null);
     try {
+      if (!rawResumeText.trim()) {
+        throw new Error("Resume text is missing. Analyze your resume again before reconstruction.");
+      }
       const res = await fetch("/api/rebuild", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ resumeText: rawResumeText || "Worked on database and frontend UI" }),
+        body: JSON.stringify({ resumeText: rawResumeText, mode: "resume" }),
       });
       const data = await res.json();
+      if (!res.ok) {
+        throw new Error(typeof data.error === "string" ? data.error : "Resume reconstruction failed. Please retry.");
+      }
+      if (!Array.isArray(data.bullets) || !data.bullets.length || data.bullets.some(
+        (bullet: {original?: unknown; enhanced?: unknown} | null) => !bullet ||
+          typeof bullet.original !== "string" || typeof bullet.enhanced !== "string"
+      )) {
+        throw new Error("The server returned an invalid resume rewrite. Please retry.");
+      }
       setDiffs(data.bullets);
+      setSelectedBullets(data.bullets.map(() => true));
     } catch (e) {
-      console.error(e);
+      setDiffs([]);
+      setGenerationError(e instanceof Error ? e.message : "Resume reconstruction failed. Please retry.");
+    } finally {
+      setIsGenerating(false);
     }
-    setIsGenerating(false);
   };
 
   useEffect(() => {
@@ -1012,6 +1033,37 @@ const RebuildModal = ({ onClose, rawResumeText }: { onClose: () => void, rawResu
     navigator.clipboard.writeText(text);
     setCopiedIndex(index);
     setTimeout(() => setCopiedIndex(null), 2000);
+  };
+
+  const selectedTexts = diffs.filter((_, index) => selectedBullets[index]).map(diff => diff.enhanced.trim());
+  const needsReview = selectedTexts.some(text => !text || /🔴|\[(?:add|insert|verify|replace|your)\b/i.test(text));
+
+  const savePdfCopy = async () => {
+    if (!uploadedFile || !selectedTexts.length || needsReview) return;
+    setIsSaving(true);
+    setSaveError(null);
+    try {
+      const body = new FormData();
+      body.append("file", uploadedFile);
+      body.append("bullets", JSON.stringify(diffs.filter((_, index) => selectedBullets[index]).map(diff => ({ original: diff.original, enhanced: diff.enhanced.trim() }))));
+      const response = await fetch("/api/export-resume", { method: "POST", body });
+      if (!response.ok) {
+        const failure = await response.json();
+        throw new Error(failure.error || "Could not save the PDF. Please retry.");
+      }
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${uploadedFile.name.replace(/\.pdf$/i, "")}-reconstructed.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : "Could not save the PDF. Please retry.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -1034,6 +1086,8 @@ const RebuildModal = ({ onClose, rawResumeText }: { onClose: () => void, rawResu
                 <Wrench className="animate-spin text-green-500/50" size={24} />
                 <p className="animate-pulse font-mono text-sm">Executing XYZ Formula Rewrite & Extracting Metrics...</p>
              </div>
+          ) : generationError ? (
+            <p role="alert" className="text-sm text-red-400">{generationError}</p>
           ) : (
             (diffs || []).map((diff, idx) => (
               <div key={idx} className="flex flex-col gap-2">
@@ -1045,11 +1099,25 @@ const RebuildModal = ({ onClose, rawResumeText }: { onClose: () => void, rawResu
                 
                 {/* AFTER block */}
                 <div className="p-5 bg-green-950/10 border border-green-500/30 rounded-lg relative group">
-                  <span className="text-xs font-mono text-green-400 uppercase block mb-3">S.P.A.R.T.A. Enhanced</span>
+                  <label className="flex items-center gap-2 text-xs font-mono text-green-400 uppercase mb-3">
+                    <input type="checkbox" checked={!!selectedBullets[idx]} disabled={isSaving}
+                      aria-label={`Include bullet ${idx + 1} in PDF`}
+                      onChange={event => setSelectedBullets(previous => previous.map((selected, index) => index === idx ? event.target.checked : selected))} />
+                    Include in PDF copy
+                  </label>
+                  <label className="block text-xs text-neutral-500 mb-2" htmlFor={`rewrite-${idx}`}>Edit and verify this bullet before saving</label>
+                  <textarea id={`rewrite-${idx}`} aria-label={`Edit reconstructed bullet ${idx + 1}`} value={diff.enhanced}
+                    disabled={isSaving} maxLength={5000} rows={4}
+                    onChange={event => setDiffs(previous => previous.map((item, index) => index === idx ? { ...item, enhanced: event.target.value } : item))}
+                    className="w-full rounded border border-neutral-700 bg-black p-3 text-sm text-neutral-200 focus:border-green-500 focus:outline-none" />
                   {/* Pretext layout injection for smooth rendering */}
-                  <div className="text-sm text-neutral-200 font-mono leading-relaxed" dangerouslySetInnerHTML={{ 
-                    __html: diff.enhanced.replace(/🔴\[(.*?)\]/g, '<span class="text-red-400 bg-red-950/50 px-1 rounded">[$1]</span>') 
-                  }} />
+                  <div className="text-sm text-neutral-200 font-mono leading-relaxed">
+                    {diff.enhanced.split(/(🔴\[.*?\])/g).map((part, partIndex) =>
+                      part.startsWith("🔴[") ? (
+                        <span key={partIndex} className="text-red-400 bg-red-950/50 px-1 rounded">{part.slice(2)}</span>
+                      ) : part
+                    )}
+                  </div>
                   
                   <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
                     <button onClick={() => handleCopy(diff.enhanced, idx)} className="px-3 py-1 bg-black border border-neutral-700 hover:border-green-500 rounded text-xs text-neutral-300 transition-colors flex items-center gap-2">
@@ -1065,10 +1133,19 @@ const RebuildModal = ({ onClose, rawResumeText }: { onClose: () => void, rawResu
         
         {/* Action Footer */}
         {!isGenerating && (
-          <div className="p-4 border-t border-neutral-900 bg-black flex justify-end">
-            <button onClick={generateDiffs} className="px-4 py-2 flex items-center gap-2 text-sm text-neutral-400 hover:text-white transition-colors">
+          <div className="p-4 border-t border-neutral-900 bg-black space-y-3">
+            <p className="text-xs text-neutral-400">Selected bullets replace their original text in the PDF copy. No extra page is added. Shorten any bullet that cannot fit.</p>
+            {needsReview && <p role="alert" className="text-xs text-amber-400">Fill marked placeholders and empty bullets, or deselect them before saving.</p>}
+            {saveError && <p role="alert" className="text-sm text-red-400">{saveError}</p>}
+            <div className="flex flex-wrap justify-end gap-3">
+            <button onClick={generateDiffs} disabled={isSaving} className="px-4 py-2 flex items-center gap-2 text-sm text-neutral-400 hover:text-white transition-colors disabled:opacity-50">
               <RefreshCcw size={14} /> Regenerate All
             </button>
+            <button onClick={savePdfCopy} disabled={isSaving || !uploadedFile || !selectedTexts.length || needsReview || !!generationError}
+              className="rounded-lg bg-green-500 px-4 py-2 text-sm font-semibold text-black disabled:opacity-40">
+              {isSaving ? "Saving PDF..." : `Save PDF copy (${selectedTexts.length})`}
+            </button>
+            </div>
           </div>
         )}
       </div>
@@ -1254,6 +1331,7 @@ export default function HomePage() {
           )}
           {appState === "rebuild" && (
             <RebuildModal 
+              uploadedFile={uploadedFile}
               rawResumeText={(roastData as any)?.resume_text || ""}
               onClose={() => setAppState("done")}
             />

@@ -55,3 +55,9 @@ out/
 coverage/
 .vercel/
 
+# Local codebase guide
+/codebase_overview.MD
+
+# Local dependency and upload caches
+/.pnpm-store/
+/backend/.cache/
